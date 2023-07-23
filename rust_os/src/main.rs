@@ -9,13 +9,27 @@
 use core::panic::PanicInfo;
 use rust_os::println;
 
-/* The test crate depends on the standard library, so we can't use it. Fortunately, Rust supports replacing the 
-default test framework through the unstable custom_test_frameworks feature. This feature requires no external 
-libraries and thus also works in #[no_std] environments. */
+/* There's a lot of different types of CPU exceptions, such as those caused by accessing a write-only
+page, or dividing by 0, or accessing a privileged instruction in user mode. 
+
+When an exception occurs, the CPU invokes the corresponding handler function. If an error invokes there
+too, a double fault exception is raised and the double fault handler is invoked. If that also errors,
+the operating system reboots. 
+
+To handle exceptions, we setup the interrupt descriptor table (IDT). The hardware uses this table directly.
+Each row has the same 16-byte format, consisting of the pointer to the handler function and some extra options. 
+
+Each exception has a predefined IDT index. Thus the hardware can automatically load the the IDT entry for each
+exception. When an exception occurs*/
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     println!("Hello World{}", "!");
+
+    rust_os::init();
+
+    // invoke a breakpoint exception
+    x86_64::instructions::interrupts::int3(); // new
 
     /* Use conditional compilation to add the call to test_main only in test contexts because 
     the function is not generated on a normal run. */
