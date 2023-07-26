@@ -28,9 +28,6 @@ pub extern "C" fn _start() -> ! {
 
     rust_os::init();
 
-    // invoke a breakpoint exception
-    x86_64::instructions::interrupts::int3(); // new
-
     /* Use conditional compilation to add the call to test_main only in test contexts because 
     the function is not generated on a normal run. */
     #[cfg(test)]

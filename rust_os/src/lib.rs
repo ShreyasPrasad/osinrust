@@ -11,6 +11,7 @@ use core::panic::PanicInfo;
 pub mod vga_buffer;
 pub mod serial;
 pub mod interrupts;
+pub mod gdt;
 
 /* Now, we implement a more robust testing framework, that inserts serial prints where necessary. */
 pub trait Testable {
@@ -102,4 +103,5 @@ pub fn exit_qemu(exit_code: QemuExitCode) {
 /* Initialize the CPU interrupt handler. */
 pub fn init() {
     interrupts::init_idt();
+    gdt::init();
 }
