@@ -104,4 +104,7 @@ pub fn exit_qemu(exit_code: QemuExitCode) {
 pub fn init() {
     interrupts::init_idt();
     gdt::init();
+    /* The interrupts::enable function of the x86_64 crate executes the special sti instruction to enable external hardware interrupts.  */
+    unsafe { interrupts::PICS.lock().initialize() };
+    x86_64::instructions::interrupts::enable();
 }
