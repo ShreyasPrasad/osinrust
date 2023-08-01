@@ -8,6 +8,8 @@
 
 use core::panic::PanicInfo;
 
+use x86_64::instructions::hlt;
+
 pub mod vga_buffer;
 pub mod serial;
 pub mod interrupts;
@@ -107,4 +109,11 @@ pub fn init() {
     /* The interrupts::enable function of the x86_64 crate executes the special sti instruction to enable external hardware interrupts.  */
     unsafe { interrupts::PICS.lock().initialize() };
     x86_64::instructions::interrupts::enable();
+}
+
+pub fn hlt_loop() -> ! {
+    // hlt: Halt the CPU until the next interrupt arrives and allow the CPu eot tner a sleep state.
+    loop {
+        hlt();
+    }
 }

@@ -7,7 +7,7 @@
 #![reexport_test_harness_main = "test_main"]
 
 use core::panic::PanicInfo;
-use rust_os::println;
+use rust_os::{println, hlt_loop};
 use x86_64::instructions::hlt;
 
 #[no_mangle]
@@ -32,13 +32,6 @@ pub extern "C" fn _start() -> ! {
 fn panic(info: &PanicInfo) -> ! {
     println!("{}", info);
     hlt_loop();
-}
-
-pub fn hlt_loop() -> ! {
-    // hlt: Halt the CPU until the next interrupt arrives and allow the CPu eot tner a sleep state.
-    loop {
-        hlt();
-    }
 }
 
 #[cfg(test)]

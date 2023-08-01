@@ -31,6 +31,8 @@ lazy_static! {
             // set an interrupt handler for the keyboard interrupt
             idt[InterruptIndex::Keyboard.as_usize()]
                 .set_handler_fn(keyboard_interrupt_handler);
+            // set a handler function for page faults
+            idt.page_fault.set_handler_fn(page_fault_handler);
         }
         idt
     };
@@ -178,4 +180,27 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
     }
+}
+
+/* We use multilevel page tables in x86-64. Page size is 4Kib, and each page entry is 8 bytes, so there are 512 entries in a single page.
+Virtual address supports 4 page level indices + an offset for the retrieved physical address to map it to the correct final physical address.  */
+/* Define handler function for page faults. 
+
+The hardware automatically walks the page tables and caches the resulting translations in the translation lookaside buffer (TLB). 
+This buffer is not updated transparently and needs to be flushed manually on page table changes.*/
+use x86_64::structures::idt::PageFaultErrorCode;
+use crate::hlt_loop;
+
+extern "x86-interrupt" fn page_fault_handler(
+    stack_frame: InterruptStackFrame,
+    error_code: PageFaultErrorCode,
+) {
+    /* The CR2 register is automatically set by the CPU on a page fault and contains the accessed virtual address that caused the page fault.  */
+    use x86_64::registers::control::Cr2;
+
+    println!("EXCEPTION: PAGE FAULT");
+    println!("Accessed Address: {:?}", Cr2::read());
+    println!("Error Code: {:?}", error_code);
+    println!("{:#?}", stack_frame);
+    hlt_loop();
 }
