@@ -1,5 +1,4 @@
 use volatile::Volatile;
-use x86_64::instructions::interrupts;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

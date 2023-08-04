@@ -2,6 +2,9 @@ use x86_64::VirtAddr;
 use x86_64::structures::tss::TaskStateSegment;
 use lazy_static::lazy_static;
 
+/* The Global Descriptor Table (GDT) is a data structure used by Intel x86-family processors starting with the 80286 in order to 
+define the characteristics of the various memory areas used during program execution, including the base address, the size, 
+and access privileges like executability and writability. These memory areas are called segments in Intel terminology. */
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
 
 lazy_static! {

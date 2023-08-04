@@ -187,7 +187,9 @@ Virtual address supports 4 page level indices + an offset for the retrieved phys
 /* Define handler function for page faults. 
 
 The hardware automatically walks the page tables and caches the resulting translations in the translation lookaside buffer (TLB). 
-This buffer is not updated transparently and needs to be flushed manually on page table changes.*/
+This buffer is not updated transparently and needs to be flushed manually on page table changes.
+
+The bootloader already sets up a 4-level page table for us and so the kernel already runs using virtual addresses. */
 use x86_64::structures::idt::PageFaultErrorCode;
 use crate::hlt_loop;
 

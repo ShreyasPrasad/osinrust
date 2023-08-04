@@ -14,6 +14,7 @@ pub mod vga_buffer;
 pub mod serial;
 pub mod interrupts;
 pub mod gdt;
+pub mod memory;
 
 /* Now, we implement a more robust testing framework, that inserts serial prints where necessary. */
 pub trait Testable {
@@ -46,13 +47,19 @@ pub fn test_panic_handler(info: &PanicInfo) -> ! {
     loop {}
 }
 
+#[cfg(test)]
+use bootloader::{entry_point, BootInfo};
+
+#[cfg(test)]
+entry_point!(test_kernel_main);
+
 /// Entry point for `cargo test`
 #[cfg(test)]
-#[no_mangle]
-pub extern "C" fn _start() -> ! {
-    init();      // new
+fn test_kernel_main(_boot_info: &'static BootInfo) -> ! {
+    // like before
+    init();
     test_main();
-    loop {}
+    hlt_loop();
 }
 
 #[cfg(test)]
