@@ -15,6 +15,10 @@ pub mod serial;
 pub mod interrupts;
 pub mod gdt;
 pub mod memory;
+pub mod allocator;
+
+/* The standard library alloc crate, used for dynamic memory allocation. */
+extern crate alloc;
 
 /* Now, we implement a more robust testing framework, that inserts serial prints where necessary. */
 pub trait Testable {
