@@ -17,6 +17,7 @@ pub mod interrupts;
 pub mod gdt;
 pub mod memory;
 pub mod allocator;
+pub mod task;
 
 /* The standard library alloc crate, used for dynamic memory allocation. */
 extern crate alloc;

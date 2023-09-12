@@ -1,0 +1,323 @@
+In Rust, futures are represented by the Future trait, which looks like:
+
+pub trait Future {
+    type Output;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output>;
+}
+
+The associated type Output specifies the type of the asynchronous value. 
+
+The poll() method returns a Poll enum signalling if a value is ready:
+
+pub enum Poll<T> {
+    Ready(T),
+    Pending,
+}
+
+We can wait for a Future by repeatedly invoking poll() but this is a busy wait
+and is cpu-intensive. A more efficient way is to block the thread until the value
+becomes available, allowing the cpu to work on other tasks in the meantime. This
+does make the async task sync though, which is not what we want.
+
+An alternative is to use future combinators which allow chaining and combining
+futures togethers through composition.
+
+struct StringLen<F> {
+    inner_future: F,
+}
+
+impl<F> Future for StringLen<F> where F: Future<Output = String> {
+    type Output = usize;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<T> {
+        match self.inner_future.poll(cx) {
+            Poll::Ready(s) => Poll::Ready(s.len()),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+While the Rust standard library itself provides no combinator methods yet, the 
+semi-official (and no_std compatible) futures crate does. Its FutureExt trait provides 
+high-level combinator methods such as map or then, which can be used to manipulate the 
+result with arbitrary closures.
+
+The big advantage of future combinators is that they keep operations async, giving high
+performance. The big disadvantage is that they make code less readable and more complicated
+very quickly, especially with borrowing and lifetimes.
+
+Async/Await is Rust's approach to fix this. The idea is that we write normal, synchronous-looking
+code and behind the scenes, Rust converts them to Futures.
+
+async fn foo() -> u32 {
+    0
+}
+
+// the above is roughly translated by the compiler to:
+fn foo() -> impl Future<Output = u32> {
+    future::ready(0)
+}
+
+Behind the scenes, the compiler converts the body of the async function into a state machine, with each 
+.await call representing a different state. The compiler also tracks which variables it needs for each
+state by creating an exact struct for each state.
+
+async fn example(min_len: usize) -> String {
+    let content = async_read_file("foo.txt").await;
+    if content.len() < min_len {
+        content + &async_read_file("bar.txt").await
+    } else {
+        content
+    }
+}
+
+The compiler-generated state structs:
+
+struct StartState {
+    min_len: usize,
+}
+
+struct WaitingOnFooTxtState {
+    min_len: usize,
+    foo_txt_future: impl Future<Output = String>,
+}
+
+struct WaitingOnBarTxtState {
+    content: String,
+    bar_txt_future: impl Future<Output = String>,
+}
+
+struct EndState {}
+
+enum ExampleStateMachine {
+    Start(StartState),
+    WaitingOnFooTxt(WaitingOnFooTxtState),
+    WaitingOnBarTxt(WaitingOnBarTxtState),
+    End(EndState),
+}
+
+To implement the state transitions, the compiler generates an implementation of
+the Future trait. 
+
+impl Future for ExampleStateMachine {
+    type Output = String; // return type of `example`
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        loop {
+            match self { // TODO: handle pinning
+                ExampleStateMachine::Start(state) => {…}
+                ExampleStateMachine::WaitingOnFooTxt(state) => {…}
+                ExampleStateMachine::WaitingOnBarTxt(state) => {…}
+                ExampleStateMachine::End(state) => {…}
+            }
+        }
+    }
+}
+
+The Output type of the future is String because it’s the return type of the example function.
+
+We show each match arm separately for clarity:
+The first state handles all code up to the first await.
+
+ExampleStateMachine::Start(state) => {
+    // from body of `example`
+    let foo_txt_future = async_read_file("foo.txt");
+    // `.await` operation
+    let state = WaitingOnFooTxtState {
+        min_len: state.min_len,
+        foo_txt_future,
+    };
+    *self = ExampleStateMachine::WaitingOnFooTxt(state);
+}
+
+The second state handles the result of the first await. We again translate the 
+.await operation into a state change, this time into the WaitingOnBarTxt state.
+
+ExampleStateMachine::WaitingOnFooTxt(state) => {
+    match state.foo_txt_future.poll(cx) {
+        Poll::Pending => return Poll::Pending,
+        Poll::Ready(content) => {
+            // from body of `example`
+            if content.len() < state.min_len {
+                let bar_txt_future = async_read_file("bar.txt");
+                // `.await` operation
+                let state = WaitingOnBarTxtState {
+                    content,
+                    bar_txt_future,
+                };
+                *self = ExampleStateMachine::WaitingOnBarTxt(state);
+            } else {
+                *self = ExampleStateMachine::End(EndState);
+                return Poll::Ready(content);
+            }
+        }
+    }
+}
+
+The third state looks like this. We simply change the state to the end state and return the final result 
+for the top level future.
+
+ExampleStateMachine::WaitingOnBarTxt(state) => {
+    match state.bar_txt_future.poll(cx) {
+        Poll::Pending => return Poll::Pending,
+        Poll::Ready(bar_txt) => {
+            *self = ExampleStateMachine::End(EndState);
+            // from body of `example`
+            return Poll::Ready(state.content + &bar_txt);
+        }
+    }
+}
+
+The final state should never be polled since the third state should return a Poll::Ready result.
+Futures should not be polled again after they returned Poll::Ready, so we panic.
+
+ExampleStateMachine::End(_) => {
+    panic!("poll called after Poll::Ready was returned");
+}
+
+Finally, the compiler needs to invoke the start state from the original function call.
+Note that this function does not start the execution of the state machine. This is a fundamental 
+design decision of futures in Rust: they do nothing until they are polled for the first time 
+(futures are executed lazily).
+
+fn example(min_len: usize) -> ExampleStateMachine {
+    ExampleStateMachine::Start(StartState {
+        min_len,
+    })
+}
+
+Consider a situation where we have a function in which a variable references another.
+
+async fn pin_example() -> i32 {
+    let array = [1, 2, 3];
+    let element = &array[2];
+    async_write_file("foo.txt", element.to_string()).await;
+    *element
+}
+
+One of the states corresponding to this async function contains the array and element variables:
+
+struct WaitingOnWriteState {
+    array: [1, 2, 3],
+    element: 0x1001c, // address of the last array element
+}
+
+The issue with this self-referential struct is that the address pointed to by element becomes invalid 
+if the struct is ever moved in memory. Updating the pointer on move is infeasible because it would
+incur a massive runtime performance penalty (Rust would have to keep track of all the pointer fields
+in structs). Instead, the compiler could try to store offsets for pointer fields. However, the compiler
+cannot always determine the offset at compile time since a reference may depend on user input, again
+resulting in runtime performance costs as a system would need to analyze references and create state
+structs. Finally, we can simply forbid moving the struct.
+
+Rust chooses the final approach: forbidding the movement of self referential structs, and placing the
+burden of moving such a struct on the programmer.
+
+Note that heap values usually have a fixed memory location referenced using a pointer type like Box<T>.
+Even if the pointer is moved, the address pointed to stays the same until it is freed through a call to
+deallocate. Remember that we can make a self-referential struct using Box<T>.
+
+fn main() {
+    let mut heap_value = Box::new(SelfReferential {
+        self_ptr: 0 as *const _,
+    });
+    let ptr = &*heap_value as *const SelfReferential;
+    heap_value.self_ptr = ptr;
+    println!("heap value at: {:p}", heap_value);
+    println!("internal reference: {:p}", heap_value.self_ptr);
+}
+
+struct SelfReferential {
+    self_ptr: *const Self,
+}
+
+The example above prints the same 2 addresses, allowing a valid self-referential struct. However, this 
+example can still be broken using functions like mem_replace to replace to value pointed to by Box<T>.
+
+let stack_value = mem::replace(&mut *heap_value, SelfReferential {
+    self_ptr: 0 as *const _,
+});
+println!("value at: {:p}", &stack_value);
+println!("internal reference: {:p}", stack_value.self_ptr);
+
+The fundamental problem that allowed the above breakage is that Box<T> allows us to get a &mut T reference 
+to the heap-allocated value. This &mut reference makes it possible to use methods like mem::replace or
+mem::swap to invalidate the heap-allocated value. So, we have to prevent &mut references to self-referential
+structs to make them safe.
+
+The pinning API provides a solution to the &mut T problem by providing the Pin<T> wrapper type and the Unpin
+marker trait. The Unpin trait is an auto trait, which is automatically implemented for all types except those 
+that explicitly opt-out. We can make self-referential T structs opt out of Unpin, making it unsafe to acquire
+a &mut T reference from a Pin<Box<T>> that can invalidate self-references.
+
+We can use PhantomPinned to make a struct opt out of Unpin. A single marker field of type PhantomPinned makes 
+the whole struct opt out of Unpin.
+
+use core::marker::PhantomPinned;
+
+struct SelfReferential {
+    self_ptr: *const Self,
+    _pin: PhantomPinned,
+}
+
+Now we can use Box::pin() to create a Pin<Box<SelfReferential>>. Pin<Box<SelfReferential>> does not implement 
+DerefMut as desired. 
+
+let mut heap_value = Box::pin(SelfReferential {
+    self_ptr: 0 as *const _,
+    _pin: PhantomPinned,
+});
+
+However, since the compiler can't distinguish between safe and unsafe &mut T, we must use unsafe operations to
+initialize self_ptr.
+
+unsafe {
+    let mut_ref = Pin::as_mut(&mut heap_value);
+    Pin::get_unchecked_mut(mut_ref).self_ptr = ptr;
+}
+
+The get_unchecked_mut function works on a Pin<&mut T> instead of a Pin<Box<T>>, so we have to use Pin::as_mut for 
+converting the value. Then we can set the self_ptr field using the &mut reference returned by get_unchecked_mut.
+
+Stack pinning using Pin<&mut T> is also possible. Unlike Pin<Box<T>> instances, which have ownership of the wrapped 
+value, Pin<&mut T> instances only temporarily borrow the wrapped value. This makes things more complicated, as it 
+requires the programmer to ensure additional guarantees themselves. Most importantly, a Pin<&mut T> must stay pinned 
+for the whole lifetime of the referenced T, which can be difficult to verify for stack-based variables. 
+
+Now consider the poll() method:
+fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output>
+
+It takes a Pin to &mut Self since futures are often self-referential. By wrapping Self into Pin and letting the compiler 
+opt-out of Unpin for self-referential futures generated from async/await, it is guaranteed that the futures are not 
+moved in memory between poll calls. This ensures that all internal references are still valid. Note that moving futures
+before they are polled is fine because futures do nothing until they are polled (contain no internal references, only the
+start state with arguments).
+
+Now, to poll futures to completion, we need a global executor (calling poll repeatedly is inefficient and does not scale).
+An executor is responsible for managing all futures, and polling them to completion. Handling futures centrally allows 
+switching to other futures when we encounter Poll::Pending on a particular future. This keeps the CPU productively busy.
+
+Many executor implementations can also take advantage of systems with multiple CPU cores. They create a thread pool that 
+is able to utilize all cores if there is enough work available and use techniques such as work stealing to balance the 
+load between cores. There are also special executor implementations for embedded systems that optimize for low latency 
+and memory overhead.
+
+Executors use the Waker API that Rust futures provide to avoid polling futures repeatedly. A special Waker type is passed 
+to each invocation of poll, wrapped in the Context type. This Waker type is created by the executor and can be used by the
+asynchronous task to signal its (partial) completion. As a result, the executor does not need to call poll on a future that
+previously returned Poll::Pending until it is notified by the corresponding waker.
+
+Consider the following example:
+
+async fn write_file() {
+    async_write_file("foo.txt", "Hello").await;
+}
+
+Hard disk writes take time, the first call to poll will return Poll::Pending. However, the hard disk driver will internally 
+store the Waker passed to the poll call and use it to notify the executor when the file is written to disk. This way, the
+executor does not need to waste time polling the future repeatedly.
+
+Futures are an example of cooperative multitasking. Instead of preemptive multitasking, futures voluntarily give up the CPU
+by returning Poll::Pending or Poll::Ready. There is nothing that forces futures to give up the CPU. If they want, they can 
+never return from poll, e.g., by spinning endlessly in a loop. Futures store the minimum state required for continuation and 
+use the same call stack as other futures.

@@ -19,8 +19,8 @@ powers of 2 as the block size. Some things we can do to improve the implementati
 3. Enforce a maximum length list for each block size. When maximum is reached, fallback deallocations do not 
 add to the block list.
 4. For allocations larger than 4KiB, use a special paging allocator to map a large continuous virt addr range
-to noncontinuous physical frames. This solves fragmentation of unused memory for large allocations.
-*/
+to noncontinuous physical frames. This solves fragmentation of unused memory for large allocations. A page 
+allocator like this makes worst case performance more predictable. */
 
 use core::{alloc::{Layout, GlobalAlloc}, ptr::{self, NonNull}, mem};
 
